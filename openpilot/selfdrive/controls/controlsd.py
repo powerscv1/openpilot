@@ -145,7 +145,7 @@ class Controls:
     driving_gear = CS.gearShifter not in (gear.neutral, gear.park, gear.reverse, gear.unknown)
     # lateral_enabled = driving_gear and self.params.get_bool("AlwaysLateral")
     #self.soft_hold_active = CS.softHoldActive #car.OnroadEvent.EventName.softHold in [e.name for e in self.sm['onroadEvents']]
-    lateral_enabled = driving_gear and self.params.get_bool("AlwaysLateral") and (CC.enabled or CS.vEgo * CV.MS_TO_KPH >= 25.0)
+    lateral_enabled = driving_gear and self.params.get_bool("AlwaysLateral") and (CC.enabled or (40.0 <= CS.vEgo * CV.MS_TO_KPH <= 110.0))
     # AlwaysLateral: when not engaged, allow lateral control only at >= 25 km/h.
     # Engaged driving keeps the existing behavior unchanged.
 
