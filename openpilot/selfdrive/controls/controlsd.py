@@ -144,13 +144,20 @@ class Controls:
     # carrot
     gear = car.CarState.GearShifter
     driving_gear = CS.gearShifter not in (gear.neutral, gear.park, gear.reverse, gear.unknown)
-    lateral_enabled = driving_gear and self.params.get_bool("AlwaysLateral")
-    #self.soft_hold_active = CS.softHoldActive #car.OnroadEvent.EventName.softHold in [e.name for e in self.sm['onroadEvents']]
+#self.soft_hold_active = CS.softHoldActive #car.OnroadEvent.EventName.softHold in [e.name for e in self.sm['onroadEvents']]
+    always_lateral_min_speed = self.params.get_int("AlwaysLateralMinSpeed")
+    always_lateral_max_speed = self.params.get_int("AlwaysLateralMaxSpeed")
+    speed_tolerance = 0.01 * CV.KPH_TO_MS  # CarState.vEgo is serialized as float32.
+    always_lateral_in_speed_range = (always_lateral_min_speed * CV.KPH_TO_MS - speed_tolerance <= CS.vEgo <=
+                                     always_lateral_max_speed * CV.KPH_TO_MS + speed_tolerance)
 
     # Check which actuators can be enabled
     below_min_speed = abs(CS.vEgo) <= max(self.CP.minSteerSpeed, MIN_LATERAL_CONTROL_SPEED)
     # This Tesla engagement change must not relax other brands' speed gates.
     steer_at_standstill = self.CP.brand == "tesla" and self.CP.steerAtStandstill
+    lateral_enabled = (driving_gear and self.params.get_bool("AlwaysLateral") and
+                       (CC.enabled or always_lateral_in_speed_range or (steer_at_standstill and CS.standstill)))
+    # The configurable speed range applies only while selfdrive is not enabled.
     CC.latActive = lateral_control_allowed(self.sm['selfdriveState'].active, lateral_enabled, CS.latEnabled,
                                            CS.steerFaultTemporary, CS.steerFaultPermanent, below_min_speed,
                                            CS.standstill, steer_at_standstill)
@@ -277,7 +284,6 @@ class Controls:
 
   def publish(self, CC, lac_log):
     CS = self.sm['carState']
-
     # Orientation and angle rates can be useful for carcontroller
     # Only calibrated (car) frame is relevant for the carcontroller
     CC.currentCurvature = self.curvature
