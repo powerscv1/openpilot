@@ -101,24 +101,25 @@ The current `carrot_settings.json` contains **175 parameters**. Every entry is a
 
 | Category | Count | Groups |
 |---|---:|---|
-| Driving control | 112 | Startup and auto, buttons and presets, steering, speed and deceleration, cruise and following gap |
+| Driving control | 114 | Startup and auto, buttons and presets, steering, speed and deceleration, cruise and following gap |
 | Vehicle and hardware | 14 | Hyundai/Kia, CAN FD/HDA, radar, driver monitoring, vehicle assistance, device hardware |
 | Display | 37 | Information, path, brightness/on-road view, external HUD |
 | System | 12 | Recording/power, network/map, sound, software |
 
 ## Driving control
 
-These 112 settings can affect vehicle motion. Change one item at a time.
+These 114 settings can affect vehicle motion. Change one item at a time.
 
 <a id="start-auto"></a>
-### Startup and auto — 9 settings
+### Startup and auto — 11 settings
 
 | Section | Parameters | Purpose |
 |---|---|---|
-| Startup | `AlwaysLateral`, `AutoEngage`, `DisableMinSteerSpeed` | Always-on lateral control, automatic engagement, and low-speed steering limits |
+| Startup | `AlwaysLateral`, `AlwaysLateralMinSpeed`, `AlwaysLateralMaxSpeed`, `AutoEngage`, `DisableMinSteerSpeed` | Always-on lateral control and its speed range, automatic engagement, and low-speed steering limits |
 | Auto cruise | `AutoCruiseControl`, `AutoGasTokSpeed`, `AutoGasCancelSpeed`, `AutoGasSyncSpeed`, `CruiseOnDist` | Automatic cruise activation and accelerator-pedal behavior |
 
-- `AlwaysLateral` permits lateral control even when cruise is not engaged. On supported Tesla vehicles it can also steer at true standstill in a forward-driving gear; moving below the minimum steering speed remains restricted. See [Tesla engagement](tesla.md#engagement-and-standstill).
+- `AlwaysLateral` permits lateral control from `AlwaysLateralMinSpeed` through `AlwaysLateralMaxSpeed` while cruise is not engaged. The boundary speeds are included; setting the minimum above the maximum prevents inactive always-on lateral control. The range is not applied while cruise is active.
+- `AlwaysLateralMinSpeed` and `AlwaysLateralMaxSpeed` set the lower and upper speeds for always-on lateral control while cruise is off. Vehicle minimum steering speed, steering faults, the lateral-enable switch, and forward-gear requirements still apply.
 - `AutoEngage`: `0` off, `1` lateral on, `2` lateral on with cruise ready.
 - `AutoCruiseControl` covers Hyundai/Kia auto-cruise and soft-hold behavior.
 - `DisableMinSteerSpeed` is vehicle-specific and relates to low-speed steering restrictions on SMDPS-equipped cars.

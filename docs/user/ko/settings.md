@@ -101,24 +101,25 @@ Carrot Web 설정 화면에서는 다음 기능을 사용할 수 있습니다.
 
 | 대분류 | 항목 수 | 중분류 |
 |---|---:|---|
-| 주행 제어 | 112 | 시작·오토, 버튼·프리셋, 차량 조향, 속도·감속, 크루즈·차간 |
+| 주행 제어 | 114 | 시작·오토, 버튼·프리셋, 차량 조향, 속도·감속, 크루즈·차간 |
 | 차량·하드웨어 | 14 | 현대·기아, CANFD·HDA, 레이더, 운전자 모니터링, 차량 보조, 기기 하드웨어 |
 | 화면 표시 | 37 | 정보 표시, 경로 표시, 밝기·주행화면, 외부 HUD |
 | 시스템 | 12 | 녹화·전원, 네트워크·지도, 사운드, 소프트웨어 |
 
 ## 주행 제어
 
-주행 제어는 차량 움직임에 영향을 줄 수 있는 112개 항목입니다. 한 번에 여러 값을 변경하지 마세요.
+주행 제어는 차량 움직임에 영향을 줄 수 있는 114개 항목입니다. 한 번에 여러 값을 변경하지 마세요.
 
 <a id="start-auto"></a>
-### 시작·오토 — 9개
+### 시작·오토 — 11개
 
 | 세부 구역 | 파라미터 | 용도 |
 |---|---|---|
-| 시작 동작 | `AlwaysLateral`, `AutoEngage`, `DisableMinSteerSpeed` | 상시 조향, 주행 시작 시 자동 활성화, 저속 조향 제한 |
+| 시작 동작 | `AlwaysLateral`, `AlwaysLateralMinSpeed`, `AlwaysLateralMaxSpeed`, `AutoEngage`, `DisableMinSteerSpeed` | 상시 조향과 허용 속도 범위, 주행 시작 시 자동 활성화, 저속 조향 제한 |
 | 오토크루즈 | `AutoCruiseControl`, `AutoGasTokSpeed`, `AutoGasCancelSpeed`, `AutoGasSyncSpeed`, `CruiseOnDist` | 크루즈 자동 활성화와 가속 페달 입력 시 동작 |
 
-- `AlwaysLateral`: 크루즈가 켜져 있지 않아도 조향 제어를 허용합니다. 지원 Tesla 차량에서는 전진 기어의 실제 정차 상태에서도 조향할 수 있으며, 최소 조향 속도 이하로 이동할 때의 제한은 유지됩니다. [Tesla 제어 진입](tesla.md#engagement-and-standstill)을 참고하세요.
+- `AlwaysLateral`: 크루즈가 켜져 있지 않아도 `AlwaysLateralMinSpeed` 이상, `AlwaysLateralMaxSpeed` 이하에서 조향 제어를 허용합니다. 경계 속도는 포함되며 최저속도를 최고속도보다 높게 설정하면 비활성 상태의 상시 조향은 동작하지 않습니다. 크루즈가 활성화된 동안에는 이 범위를 적용하지 않습니다.
+- `AlwaysLateralMinSpeed`, `AlwaysLateralMaxSpeed`: 크루즈가 꺼진 상태에서 상시 조향을 허용할 최저·최고 속도입니다. 차량 자체의 최소 조향 속도, 조향 고장, 조향 OFF, 전진 기어 조건은 계속 적용됩니다.
 - `AutoEngage`: `0` 끄기, `1` 조향 ON, `2` 조향 ON과 크루즈 대기입니다.
 - `AutoCruiseControl`: 현대·기아 차량용 오토크루즈와 소프트홀드 관련 설정입니다.
 - `DisableMinSteerSpeed`: SMDPS 장착 차량의 저속 조향 제한과 관련된 차량별 설정입니다.

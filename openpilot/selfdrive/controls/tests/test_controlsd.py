@@ -6,25 +6,33 @@ from types import SimpleNamespace
 import pytest
 
 from openpilot.cereal import car
+from openpilot.common.constants import CV
 
 
 def run_lateral_gate(*, brand="tesla", supported=True, speed=0.0, stopped=True, min_speed=0.0,
                      active=True, always_lateral=False, lat_enabled=True, temporary_fault=False,
-                     permanent_fault=False, gear="drive"):
+                     permanent_fault=False, gear="drive", always_lateral_min_speed=40,
+                     always_lateral_max_speed=110):
   # Execute the production state_control path through its lateral gating call,
   # without starting hardware, IPC, model inference, or actuator controllers.
   path = Path(__file__).parents[1] / "controlsd.py"
   tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
   tree.body = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.ClassDef))]
   namespace = {
-    "math": math, "car": car, "MIN_LATERAL_CONTROL_SPEED": 0.3,
+    "math": math, "car": car, "CV": CV, "MIN_LATERAL_CONTROL_SPEED": 0.3,
     "resolve_vehicle_model_steer_ratio": lambda *_args: 15.0,
   }
   exec(compile(tree, str(path), "exec"), namespace)
   controls = namespace["Controls"].__new__(namespace["Controls"])
   controls.CP = SimpleNamespace(brand=brand, steerAtStandstill=supported, minSteerSpeed=min_speed,
                                lateralTuning=SimpleNamespace(which=lambda: "angle"))
-  controls.params = SimpleNamespace(get_float=lambda _key: 0.0, get_bool=lambda _key: always_lateral)
+  int_params = {
+    "AlwaysLateralMinSpeed": always_lateral_min_speed,
+    "AlwaysLateralMaxSpeed": always_lateral_max_speed,
+  }
+  controls.params = SimpleNamespace(get_float=lambda _key: 0.0,
+                                    get_bool=lambda _key: always_lateral,
+                                    get_int=lambda key: int_params[key])
   controls.is_vw_meb = False
   controls.VM = SimpleNamespace(update_params=lambda *_args: None, calc_curvature=lambda *_args: 0.0)
   state = car.CarState.new_message(vEgo=speed, standstill=stopped, gearShifter=gear, latEnabled=lat_enabled,
@@ -51,9 +59,27 @@ def run_lateral_gate(*, brand="tesla", supported=True, speed=0.0, stopped=True, 
   return result[0]
 
 
-@pytest.mark.parametrize("active,always_lateral", [(True, False), (False, True)])
-def test_tesla_can_steer_at_true_standstill(active, always_lateral):
-  assert run_lateral_gate(active=active, always_lateral=always_lateral)
+@pytest.mark.parametrize("active,always_lateral,always_lateral_min_speed", [(True, False, 40), (False, True, 0)])
+def test_tesla_can_steer_at_true_standstill(active, always_lateral, always_lateral_min_speed):
+  assert run_lateral_gate(active=active, always_lateral=always_lateral,
+                          always_lateral_min_speed=always_lateral_min_speed)
+
+
+@pytest.mark.parametrize("speed_kph,expected", [(39.9, False), (40.0, True), (110.0, True), (110.1, False)])
+def test_inactive_always_lateral_uses_configured_speed_range(speed_kph, expected):
+  assert run_lateral_gate(brand="hyundai", active=False, always_lateral=True, stopped=False,
+                          speed=speed_kph * CV.KPH_TO_MS) is expected
+
+
+def test_active_lateral_ignores_always_lateral_speed_range():
+  assert run_lateral_gate(brand="hyundai", active=True, always_lateral=True, stopped=False,
+                          speed=120.0 * CV.KPH_TO_MS)
+
+
+def test_inactive_always_lateral_rejects_inverted_speed_range():
+  assert not run_lateral_gate(brand="hyundai", active=False, always_lateral=True, stopped=False,
+                              speed=80.0 * CV.KPH_TO_MS, always_lateral_min_speed=110,
+                              always_lateral_max_speed=40)
 
 
 @pytest.mark.parametrize("brand", ["tesla", "ford", "volkswagen", "psa", "hyundai"])
