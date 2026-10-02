@@ -23,6 +23,8 @@ if str(REPO_ROOT) not in sys.path:
   sys.path.insert(0, str(REPO_ROOT))
 
 from openpilot.selfdrive.carrot.radar_motion.coordinates import device_yaw_to_radar
+from openpilot.selfdrive.carrot.radar_motion.timing import front_radar_distance_delay_s
+from openpilot.selfdrive.carrot.radar.lateral import front_radar_lateral, set_radar_track_flip
 from openpilot.selfdrive.carrot.radar_motion import (
   CORNER_RADAR_MEASUREMENT_DELAY_S,
   CORNER_CUT_IN_THRESHOLD,
@@ -136,6 +138,7 @@ LEAD_SPEED_GRAPH_MAX_KPH = 140.0
 def _radar_input_sources():
   return tuple(REPO_ROOT / name for name in (
     "openpilot/selfdrive/carrot/radar/tools/radar_group3_replay.py",
+    "openpilot/selfdrive/carrot/radar/lateral.py",
     "opendbc_repo/opendbc/car/hyundai/radar_group3.py",
     "opendbc_repo/opendbc/car/radar_tracks.py",
     "opendbc_repo/opendbc/car/radar_lead_filter.py",
@@ -278,6 +281,7 @@ class RadarFrame:
   recorded_one: RecordedLead
   recorded_two: RecordedLead
   radar_delay_s: float = 0.0
+  radar_track_flipped: bool = False
   video_time_s: float | None = None
   path_y_stds: tuple[tuple[float, float], ...] = ()
   lane_stds: tuple[float, ...] = ()
@@ -299,6 +303,7 @@ class RadarFrame:
   car_state_age_s: float = math.inf
   lane_change_model_path: tuple[tuple[float, float], ...] = ()
   lane_change_device_yaw: float | None = None
+  recorded_radar_track_mode: int | None = None
 
 
 @dataclass(frozen=True)
@@ -2998,13 +3003,14 @@ def _yaw_metadata(
   return _finite(v_ego) * math.tan(road_wheel_angle) / base, True, "steering"
 
 
-def load_frames(log_path: Path) -> list[RadarFrame]:
+def load_frames(log_path: Path, *, radar_track_flip: bool | None = None) -> list[RadarFrame]:
   route_replay = _route_replay_module()
   schema = route_replay.load_openpilot_log_schema()
   data = route_replay.read_log_bytes(log_path)
   events = monotonic_log_events(schema.Event.read_multiple_bytes(data))
   latest_points: tuple[RadarPoint, ...] | None = None
   latest_points_ns = 0
+  latest_radar_track_flipped = False
   latest_v_ego = 0.0
   latest_left_blinker = latest_right_blinker = False
   latest_left_blindspot = latest_right_blindspot = False
@@ -3026,6 +3032,19 @@ def load_frames(log_path: Path) -> list[RadarFrame]:
   latest_carrot_a_target_ns = 0
   scc_dbc_messages: dict[int, tuple[str, dict[str, Any]]] = {}
   car_brand = ""
+  recorded_radar_track_mode = None
+  configured_radar_track_mode = None
+  for event in events:
+    if event.which() == "initData":
+      for entry in event.initData.params.entries:
+        if entry.key == "EnableRadarTracks":
+          try:
+            mode = int(entry.value)
+            if -2 <= mode <= 3:
+              configured_radar_track_mode = mode
+          except (ValueError, TypeError):
+            pass
+      break
   group3_enabled = False
   # carParams can be emitted well into a segment. Resolve the static vehicle
   # metadata before consuming events so legacy corner-ID recovery is limited
@@ -3034,6 +3053,10 @@ def load_frames(log_path: Path) -> list[RadarFrame]:
     try:
       if event.which() == "carParams":
         car_brand = str(event.carParams.brand)
+        recorded_radar_track_mode = (
+          configured_radar_track_mode if car_brand == "hyundai"
+          else (-2 if event.carParams.radarUnavailable else 1)
+        )
         group3_enabled = car_brand == "hyundai" and bool(int(event.carParams.extFlags) & 2048)
         scc_dbc_messages = _hyundai_scc_dbc_messages(
           route_replay,
@@ -3083,7 +3106,15 @@ def load_frames(log_path: Path) -> list[RadarFrame]:
         latest_v_ego,
         max_measurement_age_s=VALIDATION_CORNER_MAX_MEASUREMENT_AGE_S,
       )
-      recorded_points = tuple(event.liveTracks.points)
+      recorded_flip = bool(event.liveTracks.radarTrackFlipped)
+      latest_radar_track_flipped = recorded_flip if radar_track_flip is None else radar_track_flip
+      # Group3 geometry matching consumes native CAN coordinates. Normalize a
+      # copy first, then apply the requested orientation after reconstruction.
+      native_tracks = event.liveTracks
+      if recorded_flip:
+        native_tracks = native_tracks.as_builder()
+        set_radar_track_flip(native_tracks, False)
+      recorded_points = tuple(native_tracks.points)
       if group3_replay is not None:
         recorded_points = group3_replay.correct(event_t, recorded_points)
       merged = route_replay.merge_recorded_and_reconstructed_tracks(
@@ -3093,6 +3124,12 @@ def load_frames(log_path: Path) -> list[RadarFrame]:
         merged,
         allow_legacy_corner_ids=car_brand == "hyundai",
       )
+      if latest_radar_track_flipped:
+        oriented_points = []
+        for point in copied_points:
+          y_rel, yv_rel = front_radar_lateral(point.y_rel, point.yv_rel, point.source, True)
+          oriented_points.append(replace(point, y_rel=y_rel, yv_rel=yv_rel))
+        copied_points = tuple(oriented_points)
       latest_points = tuple(
         _with_group2_front_track_state(
           point, event_ns, group2_front_quality,
@@ -3169,9 +3206,7 @@ def load_frames(log_path: Path) -> list[RadarFrame]:
       wheelbase = _finite(event.carParams.wheelbase)
       latest_steer_ratio = steer_ratio if 5.0 <= steer_ratio <= 30.0 else 14.0
       latest_wheelbase = wheelbase if 1.8 <= wheelbase <= 4.5 else 2.8
-      latest_radar_delay_s = max(
-        0.0, _finite(event.carParams.radarDelay),
-      )
+      latest_radar_delay_s = front_radar_distance_delay_s(event.carParams)
     elif which == "carState":
       latest_car_state_ns = event_ns
       latest_v_ego = _finite(event.carState.vEgo)
@@ -3248,6 +3283,7 @@ def load_frames(log_path: Path) -> list[RadarFrame]:
         recorded_one=_empty_recorded_lead(),
         recorded_two=_empty_recorded_lead(),
         radar_delay_s=latest_radar_delay_s,
+        radar_track_flipped=latest_radar_track_flipped,
         video_time_s=aligned_video_time_s(qcamera_start_eof_ns, latest_model_eof_ns),
         path_y_stds=latest_path_y_stds,
         lane_stds=latest_lane_stds,
@@ -3336,6 +3372,7 @@ def load_frames(log_path: Path) -> list[RadarFrame]:
       )
     frames.append(replace(
       frame, time_s=(predictor_time_ns - origin_ns) / 1e9,
+      recorded_radar_track_mode=recorded_radar_track_mode,
     ))
   return frames
 

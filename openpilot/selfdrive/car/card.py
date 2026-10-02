@@ -314,6 +314,13 @@ class Car:
       self.params.put_bool_nonblocking("ControlsReady", True)
 
     if self.sm.all_alive(['carControl']):
+      # Guard the final application boundary, including a queued pre-reboot CC.
+      if self.params.get_bool("ImpactDashcamReboot"):
+        CC = CC.as_builder()
+        CC.enabled = CC.latActive = CC.longActive = False
+        CC.actuators = car.CarControl.Actuators.new_message()
+        CC.cruiseControl.resume = CC.cruiseControl.override = False
+        CC.cruiseControl.cancel = CS.cruiseState.enabled
       # send car controls over can
       apply_start_ns = time.monotonic_ns()
       now_nanos = self.can_log_mono_time if REPLAY else int(time.monotonic() * 1e9)
@@ -423,8 +430,8 @@ class Car:
       t.join()
     
 def main():
-  #config_realtime_process(4, Priority.CTRL_HIGH)
-  config_realtime_process(6, Priority.CTRL_HIGH)
+  # Share core5 with lower-priority radard, leaving isolated core6 for camera work.
+  config_realtime_process(5, Priority.CTRL_HIGH)
   car = Car()
   car.card_thread()
 
