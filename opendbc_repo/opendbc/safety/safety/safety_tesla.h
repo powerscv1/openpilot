@@ -352,7 +352,7 @@ static safety_config tesla_init(uint16_t param) {
   // FAULT (requiring a full vehicle power cycle to clear) when TX resumed
   // this early; defaulting to true (matching upstream) avoids sending any
   // control messages until the car's own state is confirmed at least once.
-  tesla_summon = true;
+  tesla_summon = false;
   tesla_summon_prev = false;
 
   static RxCheck tesla_model3_y_rx_checks[] = {
