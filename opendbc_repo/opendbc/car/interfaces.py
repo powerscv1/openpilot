@@ -529,7 +529,9 @@ class CarStateBase(ABC):
 
     self.modelV2 = None
     self.radarState = None
-
+    # cruise.py가 실제로 쓰는 v_cruise_kph (항상 km/h). card.py가 한 프레임 늦게 채움. 첫 프레임 전에는 None.
+    self.vCruiseKphReal = None
+    
   @abstractmethod
   def update(self, can_parsers) -> structs.CarState:
     pass
