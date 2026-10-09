@@ -35,7 +35,7 @@ When the vehicle bus supplies tire-pressure data, the four tire readings are ava
 <a id="engagement-and-standstill"></a>
 ## Engagement and standstill
 
-Tesla standstill detection uses the vehicle's ESP signal independently of the stock cruise state. Supported Tesla vehicles can steer at true standstill when driving control is active, or when `AlwaysLateral` is enabled in a forward-driving gear and lateral control is already on. Steering faults and the lateral-enable switch still block steering; minimum steering-speed limits still apply while moving.
+Tesla standstill detection uses the vehicle's ESP signal independently of the stock cruise state. Supported Tesla vehicles can steer at true standstill when driving control is active, or when `AlwaysLateral` is enabled in a forward-driving gear, the current speed is inside its configured range, and lateral control is already on. Inactive standstill steering therefore requires `AlwaysLateralMinSpeed` to be `0`. Steering faults and the lateral-enable switch still block steering; vehicle minimum steering-speed limits still apply while moving.
 
 Normal stock TACC operation is not treated as an Autosteer conflict. Where the vehicle provides its Autosteer setting, Autosteer or FSD must remain disabled. Existing steering-conflict checks still apply. A continuously idle stock ACC state no longer repeatedly cancels a new stalk engagement; a real transition from active or holding ACC to a cancel state is still forwarded briefly.
 
