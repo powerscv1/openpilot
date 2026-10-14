@@ -6,6 +6,12 @@ let lastStatus = null;
 let restartPending = false;
 
 const FALLBACK_STRINGS = {
+  recovering: "eGPU reconnecting",
+  recovering_detail: "The internal model remains in use while eGPU recovery is attempted, up to three times.",
+  recovery_ready: "eGPU READY",
+  recovery_ready_detail: "Test calculations passed. The internal model remains in use until the vehicle stops or you intervene with steering.",
+  recovery_stopped: "eGPU recovery stopped",
+  recovery_stopped_detail: "The internal model remains in use. Once parked, restart the comma. Recovery stopped because a check failed or the retry limit was reached.",
   title: "eGPU big model",
   checking: "Checking model",
   downloading: "Downloading",
@@ -81,8 +87,7 @@ function modelDisplayName(status) {
   if (explicitName) return explicitName;
 
   const modelId = String(status?.model_id || "").toLowerCase();
-  if (modelId.includes("4bfb5340-e20cde17")) return "Mountain Dew v1 (870a4823)";
-  if (modelId.includes("pr39047") || modelId.includes("mdm-v1")) return "Mountain Dew v1";
+  if (modelId.includes("pr39047") || modelId.includes("mdm-v1") || modelId.includes("6f4c0faf-256f2178") || modelId.includes("4bfb5340-e20cde17")) return "Mountain Dew";
   if (modelId.includes("pr38932") || modelId.includes("cinque-v3")) return "Cinque v3";
   if (modelId.includes("pr38823") || modelId.includes("cinque-v2")) return "Cinque v2";
   if (modelId.includes("pr38771") || modelId.includes("cinque-terre")) return "Cinque Terre";
