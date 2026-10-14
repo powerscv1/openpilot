@@ -515,7 +515,6 @@ class CarState(CarStateBase):
     # decelCruise button pulses here so the physical wheel actually moves
     # openpilot's own v_cruise, matching stalk +/- buttons on other cars.
     ret.buttonEvents = [*ret.buttonEvents, *self.drain_wheel_button_events()]
-    ret.cruiseGap = 2
     # ToDo: add Gap adjust button
 
     # Messages needed by carcontroller
