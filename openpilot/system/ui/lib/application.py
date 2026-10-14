@@ -3,7 +3,6 @@ import cffi
 import math
 import os
 import queue
-import re
 import time
 import signal
 import sys
@@ -136,19 +135,9 @@ class TextAlignmentVertical(IntEnum):
   BOTTOM = 2
 
 
-_KOREAN_TEXT_RE = re.compile(r"[\u1100-\u11ff\u3130-\u318f\uac00-\ud7a3]")
-
-
-def font_fallback(font: rl.Font, text: str | bytes | None = None) -> rl.Font:
-  """Keep locale fallback and also render Korean text in other locales."""
-  if not gui_app.has_font(FontWeight.DISPLAY):
-    return font
-  if multilang.requires_unifont():
-    return gui_app.font(FontWeight.DISPLAY)
-  if isinstance(text, bytes):
-    text = text.decode("utf-8", errors="replace")
-  # Non-ASCII punctuation, Latin accents and emoji do not require a font change.
-  if isinstance(text, str) and _KOREAN_TEXT_RE.search(text):
+def font_fallback(font: rl.Font) -> rl.Font:
+  """Fall back to unifont for languages that require it."""
+  if multilang.requires_unifont() and gui_app.has_font(FontWeight.DISPLAY):
     return gui_app.font(FontWeight.DISPLAY)
   return font
 
@@ -275,30 +264,8 @@ class MouseState:
       self._prev_mouse_event[slot] = ev
 
 
-def _make_framebuffer_reader():
-  if PC:
-    return rl.rl_get_active_framebuffer
-
-  # The ES2 raylib build stubs rlGetActiveFramebuffer to zero. Allocate once;
-  # the real ES2 binding query then needs no per-frame allocation or API lookup.
-  ffi = cffi.FFI()
-  ffi.cdef('void glGetIntegerv(unsigned int pname, int *data);')
-  gles = ffi.dlopen('libGLESv2.so')
-  binding = ffi.new('int *')
-
-  def read_framebuffer():
-    gles.glGetIntegerv(0x8CA6, binding)  # GL_FRAMEBUFFER_BINDING (ES2)
-    return binding[0]
-
-  return read_framebuffer
-
-
 class GuiApplication:
   def __init__(self, width: int | None = None, height: int | None = None):
-    # Capture the actual target after BeginDrawing: PLATFORM_COMMA binds its
-    # internal rotated_fb even when screen recording is disabled.
-    self.render_framebuffer = 0
-    self._read_framebuffer = rl.rl_get_active_framebuffer
     self._set_log_callback()
 
     self._fonts: dict[FontWeight, rl.Font] = {}
@@ -516,7 +483,6 @@ class GuiApplication:
       rl.set_config_flags(flags)
 
       rl.init_window(self._scaled_width, self._scaled_height, title)
-      self._read_framebuffer = _make_framebuffer_reader()
 
       needs_render_texture = self._scale != 1.0 or BURN_IN_MODE or RECORD
       if self._scale != 1.0:
@@ -898,11 +864,9 @@ class GuiApplication:
         render_texture = self._render_texture
         if render_texture:
           rl.begin_texture_mode(render_texture)
-          self.render_framebuffer = render_texture.id
           rl.clear_background(rl.BLACK)
         else:
           rl.begin_drawing()
-          self.render_framebuffer = self._read_framebuffer()
           rl.clear_background(rl.BLACK)
 
         if self._scale != 1.0:
@@ -1033,12 +997,8 @@ class GuiApplication:
 
   def _font_codepoints(self, font_weight: FontWeight) -> list[int]:
     codepoints = set(range(32, 127))
-    # Match the common symbols in the generated atlases (fonts/process.py).
-    codepoints.update(map(ord, "–‑✓×°§•X⚙✕◀▶✔⌫⇧␣○●↳çêüñ–‑✓×°§•€£¥"))
     if font_weight in (FontWeight.DISPLAY, FontWeight.UNIFONT):
       codepoints.update(range(0xAC00, 0xD7A4))
-      codepoints.update(range(0x1100, 0x1200))
-      codepoints.update(range(0x3130, 0x3190))
       codepoints.update(range(0x4E00, 0xA000))
       codepoints.update(range(0x3400, 0x4DC0))
     return sorted(codepoints)
@@ -1057,7 +1017,7 @@ class GuiApplication:
       rl._orig_draw_text_ex = rl.draw_text_ex
 
     def _draw_text_ex_scaled(font, text, position, font_size, spacing, tint):
-      font = font_fallback(font, text)
+      font = font_fallback(font)
       if native_text.try_plain_text(rl, font, text, position, font_size * FONT_SCALE, spacing, tint):
         return
       return rl._orig_draw_text_ex(font, text, position, font_size * FONT_SCALE, spacing, tint)

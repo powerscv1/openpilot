@@ -21,7 +21,6 @@ def run_lateral_gate(*, brand="tesla", supported=True, speed=0.0, stopped=True, 
   namespace = {
     "math": math, "car": car, "CV": CV, "MIN_LATERAL_CONTROL_SPEED": 0.3,
     "resolve_vehicle_model_steer_ratio": lambda *_args: 15.0,
-    "lateral_vehicle_parameters": lambda sm, _cp: sm["liveParameters"],
   }
   exec(compile(tree, str(path), "exec"), namespace)
   controls = namespace["Controls"].__new__(namespace["Controls"])
@@ -35,7 +34,6 @@ def run_lateral_gate(*, brand="tesla", supported=True, speed=0.0, stopped=True, 
                                     get_bool=lambda _key: always_lateral,
                                     get_int=lambda key: int_params[key])
   controls.is_vw_meb = False
-  controls.lateral_startup = SimpleNamespace(ready=True, update=lambda *_args: True)
   controls.VM = SimpleNamespace(update_params=lambda *_args: None, calc_curvature=lambda *_args: 0.0)
   state = car.CarState.new_message(vEgo=speed, standstill=stopped, gearShifter=gear, latEnabled=lat_enabled,
                                    steerFaultTemporary=temporary_fault, steerFaultPermanent=permanent_fault)
@@ -82,11 +80,6 @@ def test_inactive_always_lateral_rejects_inverted_speed_range():
   assert not run_lateral_gate(brand="hyundai", active=False, always_lateral=True, stopped=False,
                               speed=80.0 * CV.KPH_TO_MS, always_lateral_min_speed=110,
                               always_lateral_max_speed=40)
-
-
-@pytest.mark.parametrize('active,always_lateral,expected', [(False, False, False), (True, False, True), (False, True, True)])
-def test_toyota_lateral_selection_requires_engagement_or_always_lateral(active, always_lateral, expected):
-  assert run_lateral_gate(brand='toyota', speed=15.0, stopped=False, active=active, always_lateral=always_lateral) == expected
 
 
 @pytest.mark.parametrize("brand", ["tesla", "ford", "volkswagen", "psa", "hyundai"])

@@ -6,7 +6,6 @@ from openpilot.common.constants import CV
 from openpilot.selfdrive.carrot.carrot_man_input import get_carrot_man
 from openpilot.selfdrive.carrot.cruise_gap import cruise_gap_levels, next_gap_personality, supported_gap_levels
 from openpilot.selfdrive.carrot.bluetooth.model import BLUETOOTH_CANCEL, CommandReader, REMOTE_BUTTONS
-from openpilot.selfdrive.car.toyota_pcm_speed import ToyotaPcmSetSpeedSync
 
 from opendbc.car import structs
 GearShifter = structs.CarState.GearShifter
@@ -158,6 +157,9 @@ from openpilot.common.params import Params
 #EventName = log.OnroadEvent.EventName
 
 class VCruiseCarrot:
+  # ~0.5s at the ~100Hz update_v_cruise rate. See _available_debounced.
+  _AVAILABLE_DEBOUNCE_FRAMES = 50
+
   def __init__(self, CP):
     self.CP = CP
     self.bluetooth_commands = CommandReader('cruise')
@@ -168,7 +170,6 @@ class VCruiseCarrot:
     self.v_cruise_cluster_kph = 20 #V_CRUISE_UNSET
     self.v_cruise_kph_last = 20
     self._cruise_speed_initialized = False
-    self.toyota_pcm_speed_sync = ToyotaPcmSetSpeedSync(V_CRUISE_MAX)
 
     self.enabled_last = False
 
@@ -194,7 +195,6 @@ class VCruiseCarrot:
     self._gas_pressed_value = 0
     self._gas_tok_timer = int(0.4 / 0.01) # 0.4 sec
     self._gas_tok = False
-    self.speedcam_gas_tok_consumed = False  # set by card when carstate spent this tap on a camera skip
     self._brake_pressed_count = 0
     self._soft_hold_count = 0
     self._soft_hold_active = 0
@@ -209,6 +209,19 @@ class VCruiseCarrot:
     self._lat_enabled = self.params.get_int("AutoEngage") > 0
     self._v_cruise_kph_at_brake = 0
     self.cruise_state_available_last = False
+    # Debounced view of CS.cruiseState.available, used only for the
+    # "snap v_cruise_kph to the current vehicle speed" reset below (see
+    # update_v_cruise). On an openpilotLongitudinalControl car the PCM's
+    # own available bit is just mirrored status, not something guarding
+    # actual longitudinal capability, and on Tesla specifically it's been
+    # observed to flap several times a second with no brake/gas involved
+    # while settling to a stop from ~1-7 kph -- every edge used to
+    # re-trigger the reset below, snapping v_cruise_kph to whatever the
+    # car happened to be doing at that instant, repeatedly, which reads
+    # to the driver as a single scroll click sending the set speed all
+    # over the place. See _AVAILABLE_DEBOUNCE_FRAMES.
+    self._available_debounced = False
+    self._available_debounce_frames = 0
 
     self._paddle_decel_active = False
     self.carrot_cruise_active = False
@@ -321,7 +334,6 @@ class VCruiseCarrot:
       self.carrot_arg = ""
 
   def update_v_cruise(self, CS, sm, is_metric):
-    prior_cruise_kph = self.v_cruise_kph
     self._add_log("")
     self.update_params(is_metric)
     self.frame += 1
@@ -371,10 +383,6 @@ class VCruiseCarrot:
     if CC.enabled:
       self._cruise_ready = False
     v_cruise_kph = self._update_cruise_buttons(CS, CC, self.v_cruise_kph)
-    pcm_speed = self.toyota_pcm_speed_sync.update(
-      self.CP, self.speed_from_pcm, CS,
-      local_changed=abs(v_cruise_kph - prior_cruise_kph) > 1e-3,
-    )
 
     if self._activate_cruise > 0:
       #self.events.append(EventName.buttonEnable)
@@ -383,8 +391,28 @@ class VCruiseCarrot:
       #self.events.append(EventName.buttonCancel)
       self._cruise_ready = True if self._activate_cruise == -2 else False
 
+    # Debounce the "just became available" edge that drives the reset
+    # below, for openpilotLongitudinalControl cars only (see
+    # _available_debounced in __init__ for why: on Tesla specifically,
+    # CS.cruiseState.available can flap several times a second with no
+    # brake/gas involved while settling to a stop, and every raw edge used
+    # to re-trigger this reset). Other cars keep the original raw-edge
+    # behavior unchanged.
+    if self.CP.openpilotLongitudinalControl:
+      prev_available_debounced = self._available_debounced
+      if CS.cruiseState.available == self._available_debounced:
+        self._available_debounce_frames = 0
+      else:
+        self._available_debounce_frames += 1
+        if self._available_debounce_frames >= self._AVAILABLE_DEBOUNCE_FRAMES:
+          self._available_debounced = CS.cruiseState.available
+          self._available_debounce_frames = 0
+      just_became_available = self._available_debounced and not prev_available_debounced
+    else:
+      just_became_available = not self.cruise_state_available_last
+
     if CS.cruiseState.available:
-      if not self.cruise_state_available_last:
+      if just_became_available:
         self._lat_enabled = True
         v_cruise_kph = self.v_ego_kph_set
       if not self.CP.pcmCruise:
@@ -398,12 +426,18 @@ class VCruiseCarrot:
           self.v_cruise_kph = CS.cruiseState.speed * CV.MS_TO_KPH
           self.v_cruise_cluster_kph = CS.cruiseState.speedCluster * CV.MS_TO_KPH
         else:
-          if pcm_speed is not None:
-            v_cruise_kph = pcm_speed[0]
-          self.v_cruise_kph = np.clip(v_cruise_kph, 30, self._cruise_speed_max)
-          self.v_cruise_cluster_kph = (
-            self.v_cruise_kph if pcm_speed is None else np.clip(pcm_speed[1], 30, self._cruise_speed_max)
-          )
+          # Stock-PCM-tied cars are floored at 30 kph here because their own
+          # ACC/SCC generally can't resume below that without stop-and-go
+          # support. That floor doesn't fit a car where openpilot itself
+          # drives the pedals (openpilotLongitudinalControl=True, e.g. Tesla):
+          # the PCM's cruise state is only being mirrored here for engage/
+          # available, not for actual low-speed capability, so SET/RESUME
+          # below 30 kph was being forced up to 30 instead of the car's own
+          # current speed. Use the same configurable minimum as the other two
+          # branches above in that case instead.
+          min_kph = self._cruise_speed_min if self.CP.openpilotLongitudinalControl else 30
+          self.v_cruise_kph = np.clip(v_cruise_kph, min_kph, self._cruise_speed_max)
+          self.v_cruise_cluster_kph = self.v_cruise_kph
     else:
       self.v_cruise_kph = np.clip(v_cruise_kph, self._cruise_speed_min, self._cruise_speed_max) #max(20, self.v_ego_kph_set) #V_CRUISE_UNSET
       self.v_cruise_cluster_kph = self.v_cruise_kph #V_CRUISE_UNSET
@@ -975,7 +1009,7 @@ class VCruiseCarrot:
         self.carrot_cruise_active = False
         self._cruise_control(-1, 0, "Cruise off (gas pressed)")
     else:
-      self._gas_tok = True if 0 < self._gas_pressed_count < self._gas_tok_timer and not self.speedcam_gas_tok_consumed else False
+      self._gas_tok = True if 0 < self._gas_pressed_count < self._gas_tok_timer else False
       self._gas_pressed_count = min(-1, self._gas_pressed_count - 1)
       if self._gas_pressed_count < -1:
         self._gas_pressed_count_last = 0
