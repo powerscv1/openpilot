@@ -105,11 +105,11 @@ Ignoring `x0.01`, `x0.001`, `cm`, `km/h`, or `%` can make a value appear one hun
 
 ## Settings map
 
-The current `carrot_settings.json` contains **188 parameters**. The driver-monitoring exception and `NNFF` are search only; the remaining entries appear in these menus:
+The current `carrot_settings.json` contains **190 parameters**. The driver-monitoring exception and `NNFF` are search only; the remaining entries appear in these menus:
 
 | Category | Count | Groups |
 |---|---:|---|
-| Driving control | 123 | Startup and auto, buttons and presets, steering, speed and deceleration, cruise and following gap |
+| Driving control | 125 | Startup and auto, buttons and presets, steering, speed and deceleration, cruise and following gap |
 | Vehicle and hardware | 17 | Hyundai/Kia, CAN FD/HDA, radar, driver monitoring, vehicle assistance, device hardware |
 | Display | 34 | Information, path, brightness/on-road view, external HUD |
 | System | 12 | Recording/power, network/map, sound, software |
