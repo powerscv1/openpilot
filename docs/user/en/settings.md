@@ -119,15 +119,17 @@ The current `carrot_settings.json` contains **189 parameters**. The driver-monit
 These 123 settings can affect vehicle motion. Change one item at a time.
 
 <a id="start-auto"></a>
-### Startup and auto — 9 settings
+### Startup and auto — 11 settings
 
 | Section | Parameters | Purpose |
 |---|---|---|
-| Startup | `AlwaysLateral`, `AutoEngage`, `DisableMinSteerSpeed` | Always-on lateral control, automatic engagement, and low-speed steering limits |
+| Startup | `AlwaysLateral`, `AlwaysLateralMinSpeed`, `AlwaysLateralMaxSpeed`, `AutoEngage`, `DisableMinSteerSpeed` | Always-on lateral control and speed bounds, automatic engagement, and low-speed steering limits |
 | Auto cruise | `AutoCruiseControl`, `AutoGasTokSpeed`, `AutoGasCancelSpeed`, `AutoGasSyncSpeed`, `CruiseOnDist` | Automatic cruise activation and accelerator-pedal behavior |
 
 - `AlwaysLateral` permits lateral control even when cruise is not engaged. On supported Tesla vehicles it can also steer at true standstill in a forward-driving gear; moving below the minimum steering speed remains restricted. See [Tesla engagement](tesla.md#engagement-and-standstill).
 - Always Lateral waits for the first confirmation of valid model, vehicle-parameter, pose, and other required inputs after system startup. Once confirmed, this startup check ends; later input interruptions or disengagement/reengagement do not rearm it. Existing runtime safety handling remains unchanged. Expiry of the startup waiting period alone does not pass this check.
+- `AlwaysLateralMinSpeed`: Minimum speed (km/h) for always-on lateral control. Set to `0` for no minimum limit (including standstill). Lateral control engages only at or above this speed.
+- `AlwaysLateralMaxSpeed`: Maximum speed (km/h) for always-on lateral control. Set to `0` for no maximum limit. Lateral control engages only at or below this speed.
 - `AutoEngage`: `0` off, `1` lateral on, `2` lateral on with cruise ready.
 - `AutoCruiseControl` covers Hyundai/Kia auto-cruise and soft-hold behavior.
 - `DisableMinSteerSpeed` is vehicle-specific and relates to low-speed steering restrictions on SMDPS-equipped cars.

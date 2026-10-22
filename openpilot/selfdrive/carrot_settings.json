@@ -20,6 +20,8 @@
               "zh": "起步动作",
               "params": [
                 "AlwaysLateral",
+                "AlwaysLateralMinSpeed",
+                "AlwaysLateralMaxSpeed",
                 "AutoEngage",
                 "DisableMinSteerSpeed"
               ]
@@ -1824,6 +1826,40 @@
       "max": 1,
       "default": 0,
       "unit": 1
+    },
+    {
+      "group": "시작",
+      "name": "AlwaysLateralMinSpeed",
+      "title": "상시 조향 최저속도",
+      "descr": "상시 조향(Always Lateral)이 동작할 최저 속도를 설정합니다. (단위: km/h)\n0으로 설정 시 최저속도 제한 없음 (정차 포함).\n설정 속도 이상에서만 상시 조향이 동작합니다.\n일반 크루즈 조향에는 영향을 주지 않습니다.",
+      "egroup": "START",
+      "etitle": "Always Lateral Min Speed",
+      "edescr": "Minimum speed at which always-on lateral control operates. (Unit: km/h)\n0: No minimum speed limit (including standstill).\nOperates only at or above the set speed.\nDoes not affect regular cruise steering.",
+      "cgroup": "启动设置",
+      "ctitle": "全时横向最低速度",
+      "cdescr": "全时横向控制起步的最低速度。(单位: km/h)\n0: 无最低速度限制 (包含静止)。\n仅在设定速度以上有效。\n不影响正常巡航转向。",
+      "min": 0,
+      "max": 200,
+      "default": 0,
+      "unit": 5,
+      "display_unit": "speedKph"
+    },
+    {
+      "group": "시작",
+      "name": "AlwaysLateralMaxSpeed",
+      "title": "상시 조향 최대속도",
+      "descr": "상시 조향(Always Lateral)이 동작할 최대 속도를 설정합니다. (단위: km/h)\n0으로 설정 시 최대속도 제한 없음.\n설정 속도 이하에서만 상시 조향이 동작합니다.\n일반 크루즈 조향에는 영향을 주지 않습니다.",
+      "egroup": "START",
+      "etitle": "Always Lateral Max Speed",
+      "edescr": "Maximum speed at which always-on lateral control operates. (Unit: km/h)\n0: No maximum speed limit.\nOperates only at or below the set speed.\nDoes not affect regular cruise steering.",
+      "cgroup": "启动设置",
+      "ctitle": "全时横向最高速度",
+      "cdescr": "全时横向控制运行的最高速度。(单位: km/h)\n0: 无最高速度限制。\n仅在设定速度以下有效。\n不影响正常巡航转向。",
+      "min": 0,
+      "max": 250,
+      "default": 0,
+      "unit": 5,
+      "display_unit": "speedKph"
     },
     {
       "group": "시작",

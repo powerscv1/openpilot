@@ -102,6 +102,7 @@ class Controls:
     elif self.CP.lateralTuning.which() == 'torque':
       self.LaC = LatControlTorque(self.CP, self.CI)
     self.carrot_controls = CarrotControls(self.CP)
+    self.always_lateral_active = False
 
   def update(self):
     self.sm.update(15)
@@ -144,7 +145,18 @@ class Controls:
     # carrot
     gear = car.CarState.GearShifter
     driving_gear = CS.gearShifter not in (gear.neutral, gear.park, gear.reverse, gear.unknown)
-    lateral_enabled = driving_gear and self.params.get_bool("AlwaysLateral")
+    always_lateral = self.params.get_bool("AlwaysLateral")
+    if always_lateral:
+      v_ego_kph = abs(CS.vEgo) * CV.MS_TO_KPH
+      min_speed = self.params.get_int("AlwaysLateralMinSpeed")
+      max_speed = self.params.get_int("AlwaysLateralMaxSpeed")
+      hysteresis = 1.0 if getattr(self, "always_lateral_active", False) else 0.0
+      if min_speed > 0 and v_ego_kph < max(0.0, min_speed - hysteresis):
+        always_lateral = False
+      elif max_speed > 0 and v_ego_kph > (max_speed + hysteresis):
+        always_lateral = False
+    self.always_lateral_active = always_lateral
+    lateral_enabled = driving_gear and always_lateral
     #self.soft_hold_active = CS.softHoldActive #car.OnroadEvent.EventName.softHold in [e.name for e in self.sm['onroadEvents']]
 
     # Check which actuators can be enabled
