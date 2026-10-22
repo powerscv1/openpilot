@@ -30,12 +30,12 @@ def planner_preview():
   state = SimpleNamespace(lead_preview=.87, mpc=SimpleNamespace(mode='acc', source='lead0'))
 
   def step(a_lead, *, a_ego=0., mode=preview.DRIVING_MODE_NORMAL, status=True, radar=True,
-           track_id=52, gas=False, brake=False, reset=False, mpc_mode='acc', source='lead0', a_now=1.6, jerk=-.6):
+           track_id=52, model_prob=0., gas=False, brake=False, reset=False, mpc_mode='acc', source='lead0', a_now=1.6, jerk=-.6):
     state.mpc.mode, state.mpc.source = mpc_mode, source
     state.v_desired_trajectory = 10 + a_now * times + .5 * jerk * times**2
     state.a_desired_trajectory = a_now + jerk * times
-    lead = SimpleNamespace(status=status, radar=radar, radarTrackId=track_id, aLeadK=a_lead)
-    absent = SimpleNamespace(status=False, radar=False, radarTrackId=-1, aLeadK=0.)
+    lead = SimpleNamespace(status=status, radar=radar, radarTrackId=track_id, aLeadK=a_lead, modelProb=model_prob)
+    absent = SimpleNamespace(status=False, radar=False, radarTrackId=-1, aLeadK=0., modelProb=0.)
     rs = SimpleNamespace(leadOne=lead if source != 'lead1' else absent, leadTwo=lead if source == 'lead1' else absent)
     base = ns['get_accel_from_plan'](state.v_desired_trajectory, state.a_desired_trajectory, times, action_t=.35)[0]
     ns.update(self=state, sm={'radarState': rs, 'carState': SimpleNamespace(aEgo=a_ego, gasPressed=gas, brakePressed=brake)},
@@ -133,3 +133,15 @@ def test_renewed_hard_braking_is_not_smoothed_by_a_release_filter(planner_previe
 def test_zero_or_rising_plan_does_not_inherit_spurious_braking(planner_preview, a_now, jerk):
   target, base, _ = planner_preview(.5, a_now=a_now, jerk=jerk)
   assert target == pytest.approx(base)
+
+
+def test_vision_lead_arms_preview_without_radar_when_probability_sufficient(planner_preview):
+  # Radarless platform (e.g. Tesla Model Y HW4): radar=False, track_id=-1
+  # Low model probability (< 0.60): preview remains inactive
+  planner_preview(0., radar=False, track_id=-1, model_prob=0.55)
+  _, _, offset_low = planner_preview(-2., radar=False, track_id=-1, model_prob=0.55)
+  assert offset_low == 0.0
+
+  # High model probability (>= 0.60): preview arms and activates!
+  _, _, offset_high = planner_preview(-2., radar=False, track_id=-1, model_prob=0.85)
+  assert offset_high > 0.0
