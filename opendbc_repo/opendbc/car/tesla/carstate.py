@@ -63,16 +63,30 @@ class CarState(CarStateBase):
     self._tesla_speed_resume_up_nanos = 0
     self._tesla_speed_resume_down_nanos = 0
     self._tesla_speed_resume_wait_idle = False
+    self._wheel_cancel_requested = False
+    self._wheel_cancel_pulse = 0
+    self._prev_scroll_wheel_pressed = False
+    self._scroll_wheel_press_speed = None
+    self._scroll_wheel_press_frames = 0
+    self._scroll_wheel_post_release_frames = 0
+    self._scroll_wheel_speed_changed = False
+    self._scroll_wheel_pending_cancel = False
 
   def observe_speed_wheel_frame(self, data: bytes, monotonic_nanos: int) -> None:
     if len(data) != 8 or (data[0] & 0x03) != 1:
       return
 
     raw_tick = data[3] & 0x3F
+    swc_right_pressed = ((data[1] >> 4) & 0x03) == 2
+
     if raw_tick == 0:
       self.tesla_speed_button_template = bytes(data)
       self.tesla_speed_button_template_nanos = monotonic_nanos
       self._tesla_speed_resume_wait_idle = False
+      if swc_right_pressed and self.cruise_enabled_prev:
+        self._wheel_cancel_requested = True
+        if hasattr(self, '_wheel_button_queue'):
+          self._wheel_button_queue.clear()
       return
 
     if self._tesla_speed_resume_wait_idle:
@@ -222,10 +236,60 @@ class CarState(CarStateBase):
     ret.standstill = cp_party.vl["ESP_B"]["ESP_vehicleStandstillSts"] == 1
     ret.accFaulted = cruise_state == "FAULT"
 
-    # Emit a single cancel button event on the rising edge of any stock DAS cancel state.
+    unit_ms = CV.KPH_TO_MS if cruise_is_kph else CV.MPH_TO_MS
+    scroll_wheel_pressed_raw = cp_party.vl["UI_warning"]["scrollWheelPressed"] == 1
+    if scroll_wheel_pressed_raw and not self._prev_scroll_wheel_pressed:
+      self._scroll_wheel_press_speed = ret.cruiseState.speedCluster
+      self._scroll_wheel_press_frames = 0
+      self._scroll_wheel_post_release_frames = 0
+      self._scroll_wheel_speed_changed = False
+      self._scroll_wheel_pending_cancel = False
+    elif scroll_wheel_pressed_raw:
+      self._scroll_wheel_press_frames += 1
+      if (self._scroll_wheel_press_speed is not None and
+          abs(ret.cruiseState.speedCluster - self._scroll_wheel_press_speed) > unit_ms * 0.4):
+        self._scroll_wheel_speed_changed = True
+        self._scroll_wheel_pending_cancel = False
+      # If held for ~0.3s without speed change while engaged, trigger disengage immediately
+      if not self._scroll_wheel_speed_changed and self._scroll_wheel_press_frames >= 30 and ret.cruiseState.enabled:
+        self._wheel_cancel_requested = True
+        if hasattr(self, '_wheel_button_queue'):
+          self._wheel_button_queue.clear()
+        self._scroll_wheel_speed_changed = True
+        self._scroll_wheel_pending_cancel = False
+    elif not scroll_wheel_pressed_raw and self._prev_scroll_wheel_pressed:
+      # Release edge: if released without speed changing and held at least 2 frames (~20ms) while engaged,
+      # arm a short verification window (~0.35s total from press start) to ensure speedCluster didn't trail
+      if not self._scroll_wheel_speed_changed and self._scroll_wheel_press_frames >= 2 and ret.cruiseState.enabled:
+        self._scroll_wheel_pending_cancel = True
+        self._scroll_wheel_post_release_frames = 0
+      else:
+        self._scroll_wheel_pending_cancel = False
+    elif self._scroll_wheel_pending_cancel:
+      self._scroll_wheel_post_release_frames += 1
+      if (self._scroll_wheel_press_speed is not None and
+          abs(ret.cruiseState.speedCluster - self._scroll_wheel_press_speed) > unit_ms * 0.4):
+        self._scroll_wheel_speed_changed = True
+        self._scroll_wheel_pending_cancel = False
+      elif self._scroll_wheel_press_frames + self._scroll_wheel_post_release_frames >= 35:
+        if not self._scroll_wheel_speed_changed and ret.cruiseState.enabled:
+          self._wheel_cancel_requested = True
+          if hasattr(self, '_wheel_button_queue'):
+            self._wheel_button_queue.clear()
+        self._scroll_wheel_pending_cancel = False
+        self._scroll_wheel_speed_changed = True
+    self._prev_scroll_wheel_pressed = scroll_wheel_pressed_raw
+
+    if self._wheel_cancel_requested:
+      self._wheel_cancel_pulse = 1
+      self._wheel_cancel_requested = False
+    elif self._wheel_cancel_pulse > 0:
+      self._wheel_cancel_pulse -= 1
+
+    # Emit a single cancel button event on the rising edge of any stock DAS cancel state or wheel button click.
     # Feeding the raw DAS_accState enum would emit spurious "unknown" events for normal
     # states and miss cancel codes other than 0/13 that das_accCancel already covers.
-    acc_cancel = 1 if self.das_accCancel else 0
+    acc_cancel = 1 if (self.das_accCancel or self._wheel_cancel_pulse > 0) else 0
     ret.buttonEvents = [*create_button_events(acc_cancel, self.acc_cancel_last, {1: ButtonType.cancel})]
     self.acc_cancel_last = acc_cancel
 
