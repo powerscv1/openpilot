@@ -63,6 +63,8 @@ class CarState(CarStateBase):
     self._tesla_speed_resume_up_nanos = 0
     self._tesla_speed_resume_down_nanos = 0
     self._tesla_speed_resume_wait_idle = False
+    self._cruise_enabled_frames = 0
+    self._scroll_wheel_press_enabled = False
     self._wheel_cancel_requested = False
     self._wheel_cancel_pulse = 0
     self._prev_scroll_wheel_pressed = False
@@ -83,7 +85,7 @@ class CarState(CarStateBase):
       self.tesla_speed_button_template = bytes(data)
       self.tesla_speed_button_template_nanos = monotonic_nanos
       self._tesla_speed_resume_wait_idle = False
-      if swc_right_pressed and self.cruise_enabled_prev:
+      if swc_right_pressed and self.cruise_enabled_prev and self._cruise_enabled_frames >= 100:
         self._wheel_cancel_requested = True
         if hasattr(self, '_wheel_button_queue'):
           self._wheel_button_queue.clear()
@@ -236,6 +238,12 @@ class CarState(CarStateBase):
     ret.standstill = cp_party.vl["ESP_B"]["ESP_vehicleStandstillSts"] == 1
     ret.accFaulted = cruise_state == "FAULT"
 
+    if ret.cruiseState.enabled:
+      self._cruise_enabled_frames += 1
+    else:
+      self._cruise_enabled_frames = 0
+
+    is_moving = not ret.standstill and ret.vEgoRaw >= 1.0
     unit_ms = CV.KPH_TO_MS if cruise_is_kph else CV.MPH_TO_MS
     scroll_wheel_pressed_raw = cp_party.vl["UI_warning"]["scrollWheelPressed"] == 1
     if scroll_wheel_pressed_raw and not self._prev_scroll_wheel_pressed:
@@ -244,27 +252,32 @@ class CarState(CarStateBase):
       self._scroll_wheel_post_release_frames = 0
       self._scroll_wheel_speed_changed = False
       self._scroll_wheel_pending_cancel = False
+      # Cancel is only valid if cruise was ALREADY enabled for at least 1s and the car is moving (not in standstill/Auto Hold)
+      self._scroll_wheel_press_enabled = (self._cruise_enabled_frames >= 100 and is_moving)
     elif scroll_wheel_pressed_raw:
       self._scroll_wheel_press_frames += 1
       if (self._scroll_wheel_press_speed is not None and
           abs(ret.cruiseState.speedCluster - self._scroll_wheel_press_speed) > unit_ms * 0.4):
         self._scroll_wheel_speed_changed = True
         self._scroll_wheel_pending_cancel = False
-      # If held for ~0.3s without speed change while engaged, trigger disengage immediately
-      if not self._scroll_wheel_speed_changed and self._scroll_wheel_press_frames >= 30 and ret.cruiseState.enabled:
+      # If held for ~0.3s without speed change while moving and press started in active cruise, trigger disengage
+      if (self._scroll_wheel_press_enabled and not self._scroll_wheel_speed_changed and
+          self._scroll_wheel_press_frames >= 30 and ret.cruiseState.enabled and is_moving):
         self._wheel_cancel_requested = True
         if hasattr(self, '_wheel_button_queue'):
           self._wheel_button_queue.clear()
         self._scroll_wheel_speed_changed = True
         self._scroll_wheel_pending_cancel = False
     elif not scroll_wheel_pressed_raw and self._prev_scroll_wheel_pressed:
-      # Release edge: if released without speed changing and held at least 2 frames (~20ms) while engaged,
+      # Release edge: if released without speed changing and held at least 2 frames (~20ms) while engaged and moving,
       # arm a short verification window (~0.35s total from press start) to ensure speedCluster didn't trail
-      if not self._scroll_wheel_speed_changed and self._scroll_wheel_press_frames >= 2 and ret.cruiseState.enabled:
+      if (self._scroll_wheel_press_enabled and not self._scroll_wheel_speed_changed and
+          self._scroll_wheel_press_frames >= 2 and ret.cruiseState.enabled and is_moving):
         self._scroll_wheel_pending_cancel = True
         self._scroll_wheel_post_release_frames = 0
       else:
         self._scroll_wheel_pending_cancel = False
+      self._scroll_wheel_press_enabled = False
     elif self._scroll_wheel_pending_cancel:
       self._scroll_wheel_post_release_frames += 1
       if (self._scroll_wheel_press_speed is not None and
@@ -272,7 +285,7 @@ class CarState(CarStateBase):
         self._scroll_wheel_speed_changed = True
         self._scroll_wheel_pending_cancel = False
       elif self._scroll_wheel_press_frames + self._scroll_wheel_post_release_frames >= 35:
-        if not self._scroll_wheel_speed_changed and ret.cruiseState.enabled:
+        if not self._scroll_wheel_speed_changed and ret.cruiseState.enabled and is_moving:
           self._wheel_cancel_requested = True
           if hasattr(self, '_wheel_button_queue'):
             self._wheel_button_queue.clear()
