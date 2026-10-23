@@ -97,6 +97,7 @@ class CarState(CarStateBase):
     self._scroll_wheel_pending_cancel = False
     self._scroll_wheel_cancel_eligible = False
     self._engage_cancel_suppress_frames = 0
+    self.vCruiseKphReal: float | None = None
 
     # Every scroll click/flick below computes its target as an ABSOLUTE
     # display value (this car's own post-click/flick set-speed, or the next
@@ -323,7 +324,10 @@ class CarState(CarStateBase):
     # pending_units always come out far larger than any real target_units
     # and so pulses_needed always negative -- every click or flick queued
     # decelCruise regardless of the actual scroll direction.
-    real_v_cruise_units = round(self.vCruiseKphReal * CV.KPH_TO_MS / unit_ms) if self.vCruiseKphReal is not None else None
+    v_cruise_kph_real = getattr(self, 'vCruiseKphReal', None)
+    if v_cruise_kph_real is None:
+      v_cruise_kph_real = getattr(self, 'speedcam_v_cruise', None)
+    real_v_cruise_units = round(v_cruise_kph_real * CV.KPH_TO_MS / unit_ms) if v_cruise_kph_real is not None else None
     # Local running estimate of v_cruise_kph as pulses are queued this
     # frame, so an engage resync and a same-frame flick (e.g. the driver is
     # already mid-scroll right as cruise engages) stack correctly instead of

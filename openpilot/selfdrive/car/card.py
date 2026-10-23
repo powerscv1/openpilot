@@ -217,6 +217,7 @@ class Car:
     # and a section unlocks only when the set speed is above its cap.
     self.CI.CS.speedcam_engaged = self.sm['carControl'].enabled
     self.CI.CS.speedcam_v_cruise = self.v_cruise_helper.v_cruise_kph
+    self.CI.CS.vCruiseKphReal = self.v_cruise_helper.v_cruise_kph
     CS = self.CI.update(can_list)
     if self.CP.brand == 'mock':
       CS = self.mock_carstate.update(CS)

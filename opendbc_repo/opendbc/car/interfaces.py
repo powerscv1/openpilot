@@ -529,6 +529,7 @@ class CarStateBase(ABC):
 
     self.modelV2 = None
     self.radarState = None
+    self.vCruiseKphReal: float | None = None
 
   @abstractmethod
   def update(self, can_parsers) -> structs.CarState:
