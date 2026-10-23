@@ -144,7 +144,9 @@ def carrot_can_error_sources(car_name: str | bytes | None, car_state_current: bo
     return False, False
 
   car_can_error = car_state_current and (car_state.canTimeout or not car_state.canValid)
-  radar_can_error = radar_state_current and radar_state.radarErrors.canError
+  # Tesla vehicles do not use a radar CAN bus (vision only); ignore radarcan anomalies on Tesla.
+  is_tesla = car_name.strip().lower() == "tesla"
+  radar_can_error = False if is_tesla else (radar_state_current and radar_state.radarErrors.canError)
   return car_can_error, radar_can_error
 
 
