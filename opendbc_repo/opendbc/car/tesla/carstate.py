@@ -64,15 +64,19 @@ class CarState(CarStateBase):
     self._tesla_speed_resume_down_nanos = 0
     self._tesla_speed_resume_wait_idle = False
     self._cruise_enabled_frames = 0
-    self._button_is_disengage = False
     self._wheel_cancel_requested = False
     self._wheel_cancel_pulse = 0
+    self._prev_ap_control_request = 0
+
+    # Right scroll wheel button click disengage & scroll protection
     self._prev_scroll_wheel_pressed = False
-    self._scroll_wheel_press_speed = None
-    self._scroll_wheel_press_frames = 0
-    self._scroll_wheel_post_release_frames = 0
-    self._scroll_wheel_speed_changed = False
-    self._scroll_wheel_pending_cancel = False
+    self._scroll_press_frames = 0
+    self._scroll_pulse_count = 0
+    self._scroll_pulse_window_frames = 0
+    self._scroll_pending_cancel = False
+    self._scroll_verify_frames = 0
+    self._speed_change_cooldown_frames = 0
+    self._prev_cluster_speed_for_cancel = None
 
   def observe_speed_wheel_frame(self, data: bytes, monotonic_nanos: int) -> None:
     if len(data) != 8 or (data[0] & 0x03) != 1:
@@ -109,6 +113,26 @@ class CarState(CarStateBase):
     else:
       self._tesla_speed_resume_down_nanos = monotonic_nanos
       self._tesla_speed_resume_up_nanos = 0
+
+  def observe_ap_control_request(self, data: bytes) -> None:
+    """Detect right scroll wheel AP/cruise toggle via 0x3E8
+    UI_autopilotControlRequest (bit 0).  This signal fires ONLY when
+    the driver clicks the right scroll wheel button for cruise/AP
+    control.  It does NOT fire for:
+      - Volume knob (left scroll wheel) presses or rotation
+      - Speed scroll wheel rotation (up/down to adjust set speed)
+    On rising edge (0→1), if cruise has been active >= 0.6 s, fire
+    cancel.  Otherwise it is an ENGAGE request and is ignored."""
+    if len(data) < 1:
+      return
+    ap_req = data[0] & 0x01
+    if ap_req and not self._prev_ap_control_request:
+      # Rising edge: driver clicked right scroll wheel for AP/cruise
+      if self._cruise_enabled_frames >= 60:
+        self._wheel_cancel_requested = True
+        if hasattr(self, '_wheel_button_queue'):
+          self._wheel_button_queue.clear()
+    self._prev_ap_control_request = ap_req
 
   def update_summon_state(self, summon_state: str, cruise_enabled: bool):
     summon_now = summon_state in ("ACTIVE", "COMPLETE", "SELFPARK_STARTED")
@@ -244,54 +268,61 @@ class CarState(CarStateBase):
       self._cruise_enabled_frames = 0
 
     unit_ms = CV.KPH_TO_MS if cruise_is_kph else CV.MPH_TO_MS
+
+    # 1. Speed change detection: lock out cancel for 1.0 s after any set-speed adjustment
+    # (prevents fast-flicking the speed wheel from triggering cancel)
+    if self._prev_cluster_speed_for_cancel is not None:
+      if abs(ret.cruiseState.speedCluster - self._prev_cluster_speed_for_cancel) > unit_ms * 0.4:
+        self._speed_change_cooldown_frames = 100
+        self._scroll_pending_cancel = False
+    self._prev_cluster_speed_for_cancel = ret.cruiseState.speedCluster
+
+    if self._speed_change_cooldown_frames > 0:
+      self._speed_change_cooldown_frames -= 1
+
+    # 2. Multi-pulse window (filters out knob rotations with multiple detents)
+    if self._scroll_pulse_window_frames > 0:
+      self._scroll_pulse_window_frames -= 1
+    else:
+      self._scroll_pulse_count = 0
+
     scroll_wheel_pressed_raw = cp_party.vl["UI_warning"]["scrollWheelPressed"] == 1
-    if scroll_wheel_pressed_raw and not self._prev_scroll_wheel_pressed:
-      self._scroll_wheel_press_speed = ret.cruiseState.speedCluster
-      self._scroll_wheel_press_frames = 0
-      self._scroll_wheel_post_release_frames = 0
-      self._scroll_wheel_speed_changed = False
-      self._scroll_wheel_pending_cancel = False
-      # On HW4, right scroll wheel button toggles cruise START and STOP.
-      # A click is ONLY a DISENGAGE request if cruise was ALREADY active for >= 0.6s.
-      # If cruise was disabled (or just activated), this click is an ENGAGE action and must never cancel.
-      self._button_is_disengage = (self._cruise_enabled_frames >= 60)
-    elif scroll_wheel_pressed_raw:
-      self._scroll_wheel_press_frames += 1
-      if (self._scroll_wheel_press_speed is not None and
-          abs(ret.cruiseState.speedCluster - self._scroll_wheel_press_speed) > unit_ms * 0.4):
-        self._scroll_wheel_speed_changed = True
-        self._scroll_wheel_pending_cancel = False
-      # If held for ~0.25s without speed change while cruise has been active, trigger disengage immediately
-      if (self._button_is_disengage and not self._scroll_wheel_speed_changed and
-          self._scroll_wheel_press_frames >= 25 and ret.cruiseState.enabled):
-        self._wheel_cancel_requested = True
-        if hasattr(self, '_wheel_button_queue'):
-          self._wheel_button_queue.clear()
-        self._scroll_wheel_speed_changed = True
-        self._scroll_wheel_pending_cancel = False
-    elif not scroll_wheel_pressed_raw and self._prev_scroll_wheel_pressed:
-      # Release edge: if pressed while cruise was active, held at least 2 frames (~20ms), and speed didn't change,
-      # arm a short verification window (~0.25s total from press start) to ensure speedCluster didn't trail
-      if (self._button_is_disengage and not self._scroll_wheel_speed_changed and
-          self._scroll_wheel_press_frames >= 2 and ret.cruiseState.enabled):
-        self._scroll_wheel_pending_cancel = True
-        self._scroll_wheel_post_release_frames = 0
+
+    # 3. Clean single-click state machine for right wheel disengage:
+    # - Requires active cruise >= 0.6 s (prevents engage click from cancelling)
+    # - Requires deliberate press duration: 10~45 frames (100ms~450ms)
+    #   (rolling the volume knob produces micro-pulses < 80ms, which are ignored)
+    # - Requires single pulse (rolling the volume knob produces pulse trains, ignored)
+    # - Requires no speed changes during press or within 0.65 s post-release (prevents fast scroll cancel)
+    if scroll_wheel_pressed_raw:
+      self._scroll_press_frames += 1
+      if not self._prev_scroll_wheel_pressed:
+        self._scroll_pulse_count += 1
+        self._scroll_pulse_window_frames = 60
+    elif self._prev_scroll_wheel_pressed and not scroll_wheel_pressed_raw:
+      if (ret.cruiseState.enabled and self._cruise_enabled_frames >= 60 and
+          self._speed_change_cooldown_frames == 0 and
+          10 <= self._scroll_press_frames <= 45 and
+          self._scroll_pulse_count <= 1):
+        self._scroll_pending_cancel = True
+        self._scroll_verify_frames = 65
       else:
-        self._scroll_wheel_pending_cancel = False
-      self._button_is_disengage = False
-    elif self._scroll_wheel_pending_cancel:
-      self._scroll_wheel_post_release_frames += 1
-      if (self._scroll_wheel_press_speed is not None and
-          abs(ret.cruiseState.speedCluster - self._scroll_wheel_press_speed) > unit_ms * 0.4):
-        self._scroll_wheel_speed_changed = True
-        self._scroll_wheel_pending_cancel = False
-      elif self._scroll_wheel_press_frames + self._scroll_wheel_post_release_frames >= 25:
-        if not self._scroll_wheel_speed_changed and ret.cruiseState.enabled:
-          self._wheel_cancel_requested = True
-          if hasattr(self, '_wheel_button_queue'):
-            self._wheel_button_queue.clear()
-        self._scroll_wheel_pending_cancel = False
-        self._scroll_wheel_speed_changed = True
+        self._scroll_pending_cancel = False
+      self._scroll_press_frames = 0
+
+    # 4. Post-release verification window (waits for cluster CAN latency)
+    if self._scroll_pending_cancel:
+      if self._speed_change_cooldown_frames > 0:
+        self._scroll_pending_cancel = False
+      else:
+        self._scroll_verify_frames -= 1
+        if self._scroll_verify_frames <= 0:
+          if ret.cruiseState.enabled:
+            self._wheel_cancel_requested = True
+            if hasattr(self, '_wheel_button_queue'):
+              self._wheel_button_queue.clear()
+          self._scroll_pending_cancel = False
+
     self._prev_scroll_wheel_pressed = scroll_wheel_pressed_raw
 
     if self._wheel_cancel_requested:

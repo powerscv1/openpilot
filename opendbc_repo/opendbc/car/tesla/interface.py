@@ -18,6 +18,13 @@ class CarInterface(CarInterfaceBase):
       for address, data, source in frames:
         if address == 0x3C2 and source == CANBUS.vehicle:
           self.CS.observe_speed_wheel_frame(data, mono_time)
+        # UI_driverAssistControl (0x3E8) on party bus carries
+        # UI_autopilotControlRequest — specific to the right scroll wheel
+        # AP/cruise toggle click.  Unlike scrollWheelPressed (0x311) which
+        # fires for BOTH left (volume) and right (speed) wheels, this
+        # signal fires ONLY for the right-wheel cruise/AP button.
+        elif address == 0x3E8 and source == CANBUS.party:
+          self.CS.observe_ap_control_request(data)
     return super().update(can_packets)
 
   @staticmethod
