@@ -63,6 +63,7 @@ class CarState(CarStateBase):
     self._tesla_speed_resume_up_nanos = 0
     self._tesla_speed_resume_down_nanos = 0
     self._tesla_speed_resume_wait_idle = False
+    self.acc_fault_frames = 0
 
   def observe_speed_wheel_frame(self, data: bytes, monotonic_nanos: int) -> None:
     if len(data) != 8 or (data[0] & 0x03) != 1:
@@ -220,7 +221,23 @@ class CarState(CarStateBase):
     ret.cruiseState.available = cruise_state == "STANDBY" or ret.cruiseState.enabled
     ret.cruiseState.standstill = False  # This needs to be false, since we can resume from stop without sending anything special
     ret.standstill = cp_party.vl["ESP_B"]["ESP_vehicleStandstillSts"] == 1
-    ret.accFaulted = cruise_state == "FAULT"
+
+    park_brake_state = self.can_define.dv["DI_state"]["DI_parkBrakeState"].get(int(cp_party.vl["DI_state"]["DI_parkBrakeState"]), None)
+    vehicle_hold_state = self.can_define.dv["DI_state"]["DI_vehicleHoldState"].get(int(cp_party.vl["DI_state"]["DI_vehicleHoldState"]), None)
+    ret.parkingBrake = park_brake_state == "APPLIED"
+    ret.brakeHoldActive = vehicle_hold_state == "STANDSTILL"
+
+    # Tesla DI_cruiseState can transiently flap through FAULT during low-speed
+    # deceleration / settling to a stop (~1-7 kph) and standstill / Auto Hold transitions.
+    # Disengagement is already safely handled via pcmDisable (matching panda safety).
+    # To prevent spurious "Cruise Fault: Restart the Car" permanent lockouts,
+    # debounce FAULT and ignore it during low-speed stopping / standstill transients.
+    tesla_standstill_transient = ret.standstill or ret.brakeHoldActive or abs(ret.vEgo) < 3.0
+    if cruise_state == "FAULT" and not tesla_standstill_transient:
+      self.acc_fault_frames += 1
+    else:
+      self.acc_fault_frames = 0
+    ret.accFaulted = self.acc_fault_frames >= 25
 
     # Emit a single cancel button event on the rising edge of any stock DAS cancel state.
     # Feeding the raw DAS_accState enum would emit spurious "unknown" events for normal
@@ -242,11 +259,6 @@ class CarState(CarStateBase):
       self.tesla_speed_limit_target = 0.0
       self.tesla_speed_limit_target_nanos = 0
       self.tesla_speed_limit_target_valid = False
-
-    park_brake_state = self.can_define.dv["DI_state"]["DI_parkBrakeState"].get(int(cp_party.vl["DI_state"]["DI_parkBrakeState"]), None)
-    vehicle_hold_state = self.can_define.dv["DI_state"]["DI_vehicleHoldState"].get(int(cp_party.vl["DI_state"]["DI_vehicleHoldState"]), None)
-    ret.parkingBrake = park_brake_state == "APPLIED"
-    ret.brakeHoldActive = vehicle_hold_state == "STANDSTILL"
 
     # Gear
     ret.gearShifter = GEAR_MAP[self.can_define.dv["DI_systemStatus"]["DI_gear"].get(int(cp_party.vl["DI_systemStatus"]["DI_gear"]), "DI_GEAR_INVALID")]
