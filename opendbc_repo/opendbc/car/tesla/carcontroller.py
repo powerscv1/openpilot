@@ -65,6 +65,11 @@ class CarController(CarControllerBase):
         accel = float(np.clip(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX))
         if not CC.longActive:
           accel = 0.
+        elif CS.out.standstill or CS.brakeHoldActive:
+          accel = max(accel, 0.0)
+        elif abs(CS.out.vEgo) < 0.5 and accel < 0.0:
+          blend = min(1.0, max(0.0, abs(CS.out.vEgo) / 0.5))
+          accel = accel * blend
         cntr = (self.frame // 4) % 8
         set_speed_kph = None  # TODO: pass from params when available
         can_sends.append(self.tesla_can.create_longitudinal_command(state, accel, cntr, CS.out.vEgo, CC.longActive,
