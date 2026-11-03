@@ -58,9 +58,10 @@ class CarInterface(CarInterfaceBase):
         ret.flags |= TeslaFlags.AUTO_SPEED_LIMIT.value
         ret.safetyConfigs[0].safetyParam |= TeslaSafetyFlags.AUTO_SPEED_LIMIT.value
 
-      ret.vEgoStopping = 0.1
+      ret.vEgoStopping = 0.25
       ret.vEgoStarting = 0.1
       ret.stoppingDecelRate = 0.3
+      ret.stopAccel = 0.0
 
     fsd_14 = any(fw.ecu == Ecu.eps and fw.fwVersion in FSD_14_FW.get(candidate, []) for fw in car_fw)
     if fsd_14:
