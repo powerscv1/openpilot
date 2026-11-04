@@ -65,7 +65,7 @@ class CarController(CarControllerBase):
         accel = float(np.clip(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX))
         if not CC.longActive:
           accel = 0.
-        elif CS.out.standstill or CS.brakeHoldActive:
+        elif CS.out.standstill or CS.out.brakeHoldActive:
           accel = max(accel, 0.0)
         elif abs(CS.out.vEgo) < 0.5 and accel < 0.0:
           blend = min(1.0, max(0.0, abs(CS.out.vEgo) / 0.5))
